@@ -1,0 +1,16 @@
+chat_model: "gemini-3.8-flash"
+embedding_model: "gemini-embedding-001"
+chunk_size: 2000
+overlap: 200
+top_k: 6
+collection: "cloud_notes"
+data_dir: "data"
+db_dir: "chroma_db"
+min_chars: 50
+batch_size: 50
+
+generation:
+  temperature: 0.2
+
+retrieval:
+  max_distance: 0.45
