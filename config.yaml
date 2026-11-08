@@ -1,4 +1,8 @@
 chat_model: "gemini-3.8-flash"
+fallback_models:
+  - "gemini-3.8-flash"
+  - "gemini-3.5-flash"
+  - "gemini-3-flash-preview"
 embedding_model: "gemini-embedding-001"
 chunk_size: 2000
 overlap: 200

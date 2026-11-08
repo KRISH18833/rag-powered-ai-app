@@ -5,7 +5,13 @@ import streamlit as st
 from src.config import get_gemini_api_key, DB_DIR, COLLECTION_NAME
 from src.vectordb.vector_store import get_chroma_client
 from src.retrieval.retriever import retrieve
-from src.llm.llm_client import rag_answer, plain_answer
+from src.llm.llm_client import (
+    rag_answer,
+    plain_answer,
+    GenerationFailure,
+    classify_gemini_error,
+    format_degraded_passages,
+)
 from src.utils.ui import apply_video_background
 
 st.set_page_config(page_title="Cloud Notes RAG", page_icon="☁️", layout="wide")
@@ -51,15 +57,15 @@ if not api_key:
     st.stop()
 
 # ── Cached answer functions ───────────────────────────────────────────────────
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def cached_rag_answer(question):
     return rag_answer(question)
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def cached_plain_answer(question):
     return plain_answer(question)
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def cached_retrieve(question):
     return retrieve(question)
 
@@ -139,8 +145,16 @@ with bcol:
 st.markdown("<hr style='border-color:rgba(255,255,255,0.1);margin:0.5rem 0 1rem;'>", unsafe_allow_html=True)
 
 # ── Helper: Status badge ───────────────────────────────────────────────────────
-def render_status_badge(is_in_notes: bool):
-    if is_in_notes:
+def render_status_badge(status):
+    if status == "Retrieved from course notes":
+        st.markdown("""
+        <div style="margin-bottom: 0.5rem;">
+          <span style="background: rgba(52, 152, 219, 0.2); border: 1px solid rgba(52, 152, 219, 0.5); color: #3498db !important; border-radius: 12px; padding: 3px 12px; font-size: 0.82rem; font-weight: 600; display: inline-flex; align-items: center; gap: 5px;">
+            ● Retrieved from course notes
+          </span>
+        </div>
+        """, unsafe_allow_html=True)
+    elif status == "Answered from course notes" or status is True:
         st.markdown("""
         <div style="margin-bottom: 0.5rem;">
           <span style="background: rgba(46, 204, 113, 0.2); border: 1px solid rgba(46, 204, 113, 0.5); color: #2ecc71 !important; border-radius: 12px; padding: 3px 12px; font-size: 0.82rem; font-weight: 600; display: inline-flex; align-items: center; gap: 5px;">
@@ -188,13 +202,22 @@ if should_run:
 
     with st.spinner("Searching course notes..."):
         try:
-            rag_res, sources = cached_rag_answer(question)
-            chunks = cached_retrieve(question)
+            res = cached_rag_answer(question)
+            rag_res = res[0]
+            sources = res[1]
+            chunks = getattr(res, "chunks", [])
             is_in_notes = (rag_res.strip() != "I couldn't find this in the course notes." and len(sources) > 0)
+            badge_status = "Answered from course notes" if is_in_notes else "Not in course notes"
 
             plain_res = None
             if compare_mode:
-                plain_res = cached_plain_answer(question)
+                try:
+                    plain_res = cached_plain_answer(question)
+                except Exception as pe:
+                    exc_type = type(pe).__name__
+                    exc_msg = str(pe)
+                    print(f"[STREAMLIT LOGS] plain_answer error - {exc_type}: {exc_msg}", flush=True)
+                    plain_res = "AI summary is temporarily unavailable for direct comparison."
 
             st.session_state.chat_history.append({
                 "question": question,
@@ -202,13 +225,34 @@ if should_run:
                 "sources": sources,
                 "chunks": chunks,
                 "is_in_notes": is_in_notes,
+                "badge_status": badge_status,
+                "is_degraded": False,
                 "plain_answer": plain_res,
                 "compare_mode": compare_mode,
             })
-        except Exception:
-            # Friendly visible error handling without raw tracebacks
-            st.error("The AI service is busy. Please try again.")
+        except GenerationFailure as gf:
+            # Graceful degradation: retrieval succeeded, generation failed after all retries
+            exc = gf.original_exc
+            exc_type = type(exc).__name__
+            exc_msg = str(exc)
+            print(f"[STREAMLIT LOGS] GenerationFailure after retries - {exc_type}: {exc_msg}", flush=True)
+            passages_text = format_degraded_passages(gf.chunks)
+            st.session_state.chat_history.append({
+                "question": question,
+                "answer": passages_text,
+                "sources": gf.sources,
+                "chunks": gf.chunks,
+                "is_in_notes": True,
+                "badge_status": "Retrieved from course notes",
+                "is_degraded": True,
+                "plain_answer": None,
+                "compare_mode": False,
+            })
+        except Exception as e:
+            friendly_err = classify_gemini_error(e)
+            st.error(friendly_err)
             if st.button("🔄 Retry", key="retry_error_btn"):
+                st.session_state.auto_submit = True
                 st.rerun()
 
 elif (ask or st.session_state.auto_submit) and not question.strip():
@@ -219,6 +263,8 @@ elif (ask or st.session_state.auto_submit) and not question.strip():
 if st.session_state.chat_history:
     for idx, item in enumerate(st.session_state.chat_history):
         st.markdown(f"<p style='color:rgba(200,190,255,0.9); font-weight:600; font-size:1.05rem; margin-top:1.2rem; margin-bottom:0.4rem;'>🧑‍💻 {item['question']}</p>", unsafe_allow_html=True)
+
+        badge = item.get("badge_status", "Answered from course notes" if item["is_in_notes"] else "Not in course notes")
 
         if item.get("compare_mode") and item.get("plain_answer"):
             lcol, rcol = st.columns(2)
@@ -231,12 +277,18 @@ if st.session_state.chat_history:
                 """, unsafe_allow_html=True)
 
             with rcol:
-                render_status_badge(item["is_in_notes"])
+                render_status_badge(badge)
                 st.markdown(f'<div class="glass-sm">{item["answer"]}</div>', unsafe_allow_html=True)
                 render_chips(item["sources"])
                 render_sources_panel(item["chunks"], item["is_in_notes"])
         else:
-            render_status_badge(item["is_in_notes"])
+            render_status_badge(badge)
             st.markdown(f'<div class="glass">{item["answer"]}</div>', unsafe_allow_html=True)
             render_chips(item["sources"])
             render_sources_panel(item["chunks"], item["is_in_notes"])
+
+        if item.get("is_degraded"):
+            if st.button("🔄 Retry", key=f"retry_degraded_{idx}"):
+                st.session_state.question = item["question"]
+                st.session_state.auto_submit = True
+                st.rerun()
