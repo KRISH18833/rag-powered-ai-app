@@ -1,5 +1,4 @@
 .env
-chroma_db/
 logs/
 venv/
 .venv/

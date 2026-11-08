@@ -14,24 +14,33 @@ st.set_page_config(page_title="Cloud Notes RAG", page_icon="☁️", layout="wid
 apply_video_background()
 
 # ── Auto-ingest index if missing at startup ───────────────────────────────────
-def ensure_vector_db():
-    db_path = Path(DB_DIR)
-    needs_ingest = False
-    if not db_path.exists() or not any(db_path.iterdir()):
-        needs_ingest = True
-    else:
-        try:
-            client = get_chroma_client()
-            col = client.get_collection(COLLECTION_NAME)
-            if col.count() == 0:
-                needs_ingest = True
-        except Exception:
-            needs_ingest = True
+@st.cache_resource(show_spinner=False)
+def _run_guarded_ingest():
+    """Run ingestion guarded across sessions by st.cache_resource."""
+    try:
+        client = get_chroma_client()
+        col = client.get_collection(COLLECTION_NAME)
+        if col.count() > 0:
+            return True
+    except Exception:
+        pass
 
-    if needs_ingest:
-        with st.spinner("Building vector index from course notes..."):
-            from ingest import main as run_ingest
-            run_ingest()
+    from ingest import main as run_ingest
+    run_ingest()
+    return True
+
+def ensure_vector_db():
+    """Ensure vector database exists and is populated."""
+    try:
+        client = get_chroma_client()
+        col = client.get_collection(COLLECTION_NAME)
+        if col.count() > 0:
+            return
+    except Exception:
+        pass
+
+    with st.spinner("Building vector index from course notes..."):
+        _run_guarded_ingest()
 
 ensure_vector_db()
 

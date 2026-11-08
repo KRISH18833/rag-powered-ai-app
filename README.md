@@ -2,7 +2,7 @@
 
 A production-ready Retrieval-Augmented Generation (RAG) assistant built over **Cloud Computing for Machine Learning** course notes, powered by Google Gemini, ChromaDB, and Streamlit. The application retrieves factual passages from 5 modular units, applies distance thresholding to suppress hallucinations, features resilient API retry/failover logic, and renders a glassmorphic web interface with a looping background video.
 
-**Live demo:** [https://cloud-notes-rag.onrender.com](https://cloud-notes-rag.onrender.com)
+**Live demo:** [https://rag-powered-ai-app-h3nl.onrender.com](https://rag-powered-ai-app-h3nl.onrender.com)
 
 ---
 
