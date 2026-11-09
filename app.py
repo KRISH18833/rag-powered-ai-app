@@ -98,14 +98,20 @@ if "chat_history" not in st.session_state:
 if "auto_submit" not in st.session_state:
     st.session_state.auto_submit = False
 
-if "scope_choice" not in st.session_state:
-    st.session_state.scope_choice = "Course notes (Cloud Computing for ML)"
+# Scope state — managed via st.session_state.scope + scope_override flag pattern
+if "scope" not in st.session_state:
+    st.session_state.scope = "Course notes (Cloud Computing for ML)"
 
-if "has_auto_switched_scope" not in st.session_state:
-    st.session_state.has_auto_switched_scope = False
+if "scope_user_set" not in st.session_state:
+    st.session_state.scope_user_set = False
 
 if "processed_files" not in st.session_state:
     st.session_state.processed_files = set()
+
+# Process scope_override BEFORE the radio is created so the new value is
+# already in st.session_state.scope when the radio renders.
+if "scope_override" in st.session_state:
+    st.session_state.scope = st.session_state.pop("scope_override")
 
 SAMPLE_QUESTIONS = [
     (
@@ -187,9 +193,9 @@ with st.sidebar:
                 finally:
                     progress_placeholder.empty()
 
-            if newly_indexed_any and not st.session_state.has_auto_switched_scope:
-                st.session_state.scope_choice = "My uploaded PDFs"
-                st.session_state.has_auto_switched_scope = True
+            if newly_indexed_any and not st.session_state.scope_user_set:
+                st.session_state.scope_override = "My uploaded PDFs"
+                st.toast("🗂️ Now chatting with your uploaded PDFs!", icon="✅")
                 st.rerun()
 
     # List indexed documents in session
@@ -207,12 +213,18 @@ with st.sidebar:
                 if st.button("🗑️", key=f"del_{doc['filename']}", help=f"Remove {doc['filename']}"):
                     remove_uploaded(st.session_state.session_id, doc['filename'])
                     st.session_state.processed_files.discard(doc['filename'])
+                    # If no uploads remain, revert scope to course notes
+                    remaining = list_uploaded(st.session_state.session_id)
+                    if not remaining:
+                        st.session_state.scope_override = "Course notes (Cloud Computing for ML)"
+                        st.session_state.scope_user_set = False
                     st.rerun()
 
         if st.button("🗑️ Remove all my PDFs", use_container_width=True):
             clear_uploaded(st.session_state.session_id)
             st.session_state.processed_files.clear()
-            st.session_state.scope_choice = "Course notes (Cloud Computing for ML)"
+            st.session_state.scope_override = "Course notes (Cloud Computing for ML)"
+            st.session_state.scope_user_set = False
             st.rerun()
 
     st.markdown("---")
@@ -250,25 +262,31 @@ SCOPE_CHOICES = [
     "Both",
 ]
 
-# Ensure valid selection index
-if st.session_state.scope_choice not in SCOPE_CHOICES:
-    st.session_state.scope_choice = "Course notes (Cloud Computing for ML)"
+# Guard: scope must be a valid option
+if st.session_state.scope not in SCOPE_CHOICES:
+    st.session_state.scope = "Course notes (Cloud Computing for ML)"
 
-scope_choice = st.radio(
+
+def _on_scope_change():
+    """Mark that the user has explicitly chosen a scope."""
+    st.session_state.scope_user_set = True
+
+
+st.radio(
     "Search Scope",
     SCOPE_CHOICES,
-    index=SCOPE_CHOICES.index(st.session_state.scope_choice),
+    key="scope",
+    on_change=_on_scope_change,
     horizontal=True,
     label_visibility="collapsed",
 )
-st.session_state.scope_choice = scope_choice
 
 scope_map = {
     "Course notes (Cloud Computing for ML)": "course",
     "My uploaded PDFs": "upload",
     "Both": "both",
 }
-current_scope = scope_map[scope_choice]
+current_scope = scope_map[st.session_state.scope]
 
 # Check if user selected upload mode with no uploads
 indexed_docs = list_uploaded(st.session_state.session_id)
@@ -277,6 +295,16 @@ is_upload_only_and_empty = (current_scope == "upload" and not has_uploads)
 
 if is_upload_only_and_empty:
     st.info("Upload a PDF in the sidebar to get started.")
+
+# ── Active scope banner (shown above chat input) ──────────────────────────────
+if current_scope == "upload":
+    names = ", ".join(d["filename"] for d in indexed_docs) or "no files indexed"
+    st.info(f"🔍 Searching: **your uploaded PDFs** ({names})")
+elif current_scope == "both":
+    names = ", ".join(d["filename"] for d in indexed_docs) or "none"
+    st.info(f"🔍 Searching: **both** — your uploads ({names}) + Course notes")
+else:
+    st.info("🔍 Searching: **Course notes** (Cloud Computing for ML)")
 
 # ── Sample question buttons / Scope hints ─────────────────────────────────────
 if current_scope in ("course", "both"):
@@ -403,6 +431,10 @@ if should_run:
             chunks = getattr(res, "chunks", [])
             is_found = (rag_res.strip() != FALLBACK_RESPONSE and "couldn't find this" not in rag_res.lower() and len(sources) > 0)
 
+            # Upload-only fallback tip: nudge user to also search course notes
+            if current_scope == "upload" and not is_found:
+                rag_res = rag_res + "\n\n*💡 Tip: switch to **Course notes** or **Both** to also search the built-in course material.*"
+
             if not is_found:
                 badge_status = "Not found in selected documents"
             else:
@@ -436,6 +468,7 @@ if should_run:
                 "is_degraded": False,
                 "plain_answer": plain_res,
                 "compare_mode": compare_mode,
+                "scope": current_scope,
             })
         except GenerationFailure as gf:
             exc = gf.original_exc
@@ -455,6 +488,7 @@ if should_run:
                 "is_degraded": True,
                 "plain_answer": None,
                 "compare_mode": False,
+                "scope": current_scope,
             })
         except Exception as e:
             friendly_err = classify_gemini_error(e)
@@ -468,11 +502,19 @@ elif (ask or st.session_state.auto_submit) and not question.strip():
     st.markdown('<div class="err-box">Please enter a question first.</div>', unsafe_allow_html=True)
 
 # ── Render Chat History ────────────────────────────────────────────────────────
+_scope_label_map = {
+    "upload": "Your uploaded PDFs",
+    "course": "Course notes",
+    "both": "Both — uploads + Course notes",
+}
+
 if st.session_state.chat_history:
     for idx, item in enumerate(st.session_state.chat_history):
         st.markdown(f"<p style='color:rgba(200,190,255,0.9); font-weight:600; font-size:1.05rem; margin-top:1.2rem; margin-bottom:0.4rem;'>🧑‍💻 {item['question']}</p>", unsafe_allow_html=True)
 
         badge = item.get("badge_status", "Answered from course notes" if item["is_in_notes"] else "Not found in selected documents")
+        item_scope = item.get("scope", "course")
+        searched_label = _scope_label_map.get(item_scope, "Course notes")
 
         if item.get("compare_mode") and item.get("plain_answer"):
             lcol, rcol = st.columns(2)
@@ -486,11 +528,13 @@ if st.session_state.chat_history:
 
             with rcol:
                 render_status_badge(badge)
+                st.caption(f"Searched: {searched_label}")
                 st.markdown(f'<div class="glass-sm">{item["answer"]}</div>', unsafe_allow_html=True)
                 render_chips(item["sources"])
                 render_sources_panel(item["chunks"], item["is_in_notes"])
         else:
             render_status_badge(badge)
+            st.caption(f"Searched: {searched_label}")
             st.markdown(f'<div class="glass">{item["answer"]}</div>', unsafe_allow_html=True)
             render_chips(item["sources"])
             render_sources_panel(item["chunks"], item["is_in_notes"])

@@ -61,6 +61,19 @@ def retrieve(
             print(f"[RETRIEVER] Warning querying uploads for session {session_id}: {e}")
 
     # Merge and rank by distance ascending
-    combined = course_chunks + upload_chunks
-    combined.sort(key=lambda x: x.get("distance", 1.0))
-    return combined[:n_results]
+    if scope == "both":
+        # Guarantee at least min(3, len(upload_chunks)) upload chunks so they
+        # are not drowned out by course-notes when user chose "Both".
+        upload_take = min(3, len(upload_chunks))
+        guaranteed_upload = upload_chunks[:upload_take]
+        # Fill remaining slots from the rest of both lists, sorted by distance
+        remaining_pool = course_chunks + upload_chunks[upload_take:]
+        remaining_pool.sort(key=lambda x: x.get("distance", 1.0))
+        remaining_slots = max(n_results - upload_take, 0)
+        combined = guaranteed_upload + remaining_pool[:remaining_slots]
+        combined.sort(key=lambda x: x.get("distance", 1.0))
+        return combined[:n_results]
+    else:
+        combined = course_chunks + upload_chunks
+        combined.sort(key=lambda x: x.get("distance", 1.0))
+        return combined[:n_results]
