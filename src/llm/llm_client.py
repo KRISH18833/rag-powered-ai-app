@@ -1,10 +1,18 @@
 import time
 import random
+import hashlib
 from typing import Any, Optional, Tuple, List
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
-from src.config import load_config, get_gemini_api_key, CHAT_MODEL, TEMPERATURE, MAX_DISTANCE
+from src.config import (
+    load_config,
+    get_gemini_api_key,
+    CHAT_MODEL,
+    TEMPERATURE,
+    MAX_DISTANCE,
+    UPLOAD_MAX_DISTANCE,
+)
 from src.prompts.prompt_templates import (
     SYSTEM_PROMPT,
     PLAIN_PROMPT,
@@ -12,6 +20,7 @@ from src.prompts.prompt_templates import (
     build_rag_prompt,
 )
 from src.retrieval.retriever import retrieve
+from src.vectordb.vector_store import list_uploaded
 
 
 class RagResult(tuple):
@@ -68,10 +77,12 @@ def format_degraded_passages(chunks: list) -> str:
     lines = ["AI summary is temporarily unavailable. Most relevant passages from the course notes:\n"]
     for i, c in enumerate(chunks[:3], 1):
         dist = c.get("distance", 0.0)
+        source = c.get("file", c.get("source", "Unknown"))
+        page = c.get("page", "?")
         snippet = c.get("text", "").replace("\n", " ").strip()
         if len(snippet) > 300:
             snippet = snippet[:300] + "…"
-        lines.append(f"**[{i}] {c.get('source', 'Unknown')}, p.{c.get('page', '?')}** (distance: `{dist:.4f}`)\n> {snippet}\n")
+        lines.append(f"**[{i}] {source}, p.{page}** (distance: `{dist:.4f}`)\n> {snippet}\n")
     return "\n".join(lines)
 
 
@@ -123,9 +134,13 @@ def generate_with_retry(
         types.GenerateContentConfig(
             temperature=temp,
             system_instruction=system_instruction,
+            http_options=types.HttpOptions(timeout=15000),
         )
         if system_instruction
-        else types.GenerateContentConfig(temperature=temp)
+        else types.GenerateContentConfig(
+            temperature=temp,
+            http_options=types.HttpOptions(timeout=15000),
+        )
     )
 
     models = get_model_rotation(model)
@@ -163,35 +178,57 @@ def generate_with_retry(
     raise last_exception if last_exception is not None else RuntimeError("Generation failed after all retries.")
 
 
+def get_upload_hash(session_id: Optional[str]) -> str:
+    """Compute a hash signature of the current files indexed for session_id."""
+    if not session_id:
+        return ""
+    try:
+        files = list_uploaded(session_id)
+        if not files:
+            return ""
+        sig = ";".join(f"{f['filename']}:{f['chunk_count']}" for f in sorted(files, key=lambda x: x['filename']))
+        return hashlib.md5(sig.encode("utf-8")).hexdigest()
+    except Exception:
+        return ""
+
+
 def rag_answer(
     question: str,
+    scope: str = "course",
+    session_id: Optional[str] = None,
     k: Optional[int] = None,
     max_distance: Optional[float] = None,
+    upload_max_distance: Optional[float] = None,
     model: Optional[str] = None,
     client: Optional[genai.Client] = None,
+    upload_hash: Optional[str] = None,
 ) -> RagResult:
-    """Retrieve relevant chunks and generate a grounded RAG response.
+    """Retrieve relevant chunks and generate a grounded RAG response across course and/or uploaded docs.
     
-    If no chunk has distance <= max_distance, skips the LLM call entirely and returns
+    If no chunk has distance <= threshold, skips the LLM call entirely and returns
     the exact fallback response with an empty sources list.
     """
-    threshold = max_distance if max_distance is not None else MAX_DISTANCE
-    chunks = retrieve(question, k=k)
-
-    # Filter chunks based on distance threshold
-    valid_chunks = [c for c in chunks if c.get("distance", 1.0) <= threshold]
+    chunks = retrieve(
+        question=question,
+        scope=scope,
+        session_id=session_id,
+        k=k,
+        max_distance=max_distance,
+        upload_max_distance=upload_max_distance,
+    )
 
     # If no chunk meets threshold, skip LLM call and return fallback immediately
-    if not valid_chunks:
-        return RagResult(FALLBACK_RESPONSE, [], chunks=chunks)
+    if not chunks:
+        return RagResult(FALLBACK_RESPONSE, [], chunks=[])
 
     sources = []
-    for chunk in valid_chunks:
-        label = f"{chunk['source']}, p.{chunk['page']}"
+    for chunk in chunks:
+        source_name = chunk.get("file", chunk.get("source", "Unknown"))
+        label = f"{source_name}, p.{chunk['page']}"
         if label not in sources:
             sources.append(label)
 
-    prompt = build_rag_prompt(question, valid_chunks)
+    prompt = build_rag_prompt(question, chunks)
     try:
         answer = generate_with_retry(
             contents=prompt,
@@ -202,7 +239,7 @@ def rag_answer(
         )
     except Exception as e:
         # Re-raise as GenerationFailure carrying the valid chunks and sources for graceful degradation
-        raise GenerationFailure(original_exc=e, chunks=valid_chunks, sources=sources) from e
+        raise GenerationFailure(original_exc=e, chunks=chunks, sources=sources) from e
 
     # If the model itself replies with the fallback line, return empty sources
     if FALLBACK_RESPONSE.lower() in answer.lower():

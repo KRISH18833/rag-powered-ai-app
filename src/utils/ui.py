@@ -225,6 +225,78 @@ def apply_video_background(
         color: #ffcccc !important;
         margin-bottom: 1rem !important;
     }}
+
+    /* File Uploader styling */
+    [data-testid="stFileUploader"] section {{
+        background: rgba(18, 16, 38, 0.65) !important;
+        border: 1px dashed rgba(255, 255, 255, 0.3) !important;
+        border-radius: 14px !important;
+        padding: 0.8rem 1rem !important;
+    }}
+    [data-testid="stFileUploader"] section:hover {{
+        border-color: rgba(147, 112, 219, 0.8) !important;
+    }}
+    [data-testid="stFileUploader"] * {{
+        color: #ffffff !important;
+    }}
+
+    /* Scope Selector (Radio) */
+    [data-testid="stRadio"] {{
+        background: rgba(22, 20, 48, 0.55) !important;
+        backdrop-filter: blur(12px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.16) !important;
+        border-radius: 14px !important;
+        padding: 0.6rem 1.2rem !important;
+        margin-bottom: 0.8rem !important;
+    }}
+    [data-testid="stRadio"] label {{
+        color: #ffffff !important;
+        font-weight: 500 !important;
+        cursor: pointer !important;
+    }}
+    [data-testid="stRadio"] div[role="radiogroup"] {{
+        gap: 1.5rem !important;
+    }}
+
+    /* Progress bar */
+    [data-testid="stProgress"] > div > div > div > div {{
+        background: linear-gradient(90deg, #9370db, #3498db) !important;
+    }}
+    [data-testid="stProgress"] > div > div {{
+        background: rgba(255, 255, 255, 0.15) !important;
+        border-radius: 8px !important;
+    }}
+
+    /* Uploaded Document List Cards in Sidebar */
+    .doc-card {{
+        background: rgba(255, 255, 255, 0.08) !important;
+        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+        border-radius: 10px !important;
+        padding: 0.5rem 0.75rem !important;
+        margin-bottom: 0.4rem !important;
+    }}
+
+    /* Source Tags */
+    .source-tag {{
+        display: inline-block;
+        font-size: 0.72rem;
+        font-weight: 600;
+        padding: 1px 7px;
+        border-radius: 8px;
+        margin-right: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }}
+    .source-tag-course {{
+        background: rgba(147, 112, 219, 0.25);
+        border: 1px solid rgba(147, 112, 219, 0.6);
+        color: #d8b4fe !important;
+    }}
+    .source-tag-upload {{
+        background: rgba(52, 152, 219, 0.25);
+        border: 1px solid rgba(52, 152, 219, 0.6);
+        color: #7dd3fc !important;
+    }}
     </style>
     """
     st.markdown(style_html, unsafe_allow_html=True)

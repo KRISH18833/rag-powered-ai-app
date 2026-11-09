@@ -71,3 +71,13 @@ retrieval_cfg = config.get("retrieval", {})
 if not isinstance(retrieval_cfg, dict):
     retrieval_cfg = {}
 MAX_DISTANCE = float(retrieval_cfg.get("max_distance", config.get("max_distance", 0.45)))
+
+# Upload limits and settings
+upload_cfg = config.get("upload", {})
+if not isinstance(upload_cfg, dict):
+    upload_cfg = {}
+UPLOAD_MAX_FILES = int(upload_cfg.get("max_files", 5))
+UPLOAD_MAX_FILE_MB = float(upload_cfg.get("max_file_mb", 10.0))
+UPLOAD_MAX_TOTAL_PAGES = int(upload_cfg.get("max_total_pages", 150))
+UPLOAD_MAX_TOTAL_CHUNKS = int(upload_cfg.get("max_total_chunks", 400))
+UPLOAD_MAX_DISTANCE = float(upload_cfg.get("upload_max_distance", 0.55))

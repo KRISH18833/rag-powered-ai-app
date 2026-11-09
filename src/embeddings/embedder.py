@@ -5,6 +5,7 @@ from google import genai
 from google.genai import types
 from google.genai.errors import APIError
 from src.config import get_gemini_api_key, EMBEDDING_MODEL, BATCH_SIZE
+from src.ingestion.loader import UploadError
 
 
 def get_embedding_client(api_key: Optional[str] = None) -> genai.Client:
@@ -31,14 +32,17 @@ def embed_batches(
     model: str = EMBEDDING_MODEL,
     batch_size: int = BATCH_SIZE,
     client: Optional[genai.Client] = None,
+    progress_callback: Optional[Any] = None,
 ) -> List[List[float]]:
-    """Embed document chunks in batches with rate-limiting and retry logic."""
+    """Embed document chunks in batches with rate-limiting, retry logic, and optional progress reporting."""
     cli = _get_client(client)
     texts = [c["text"] for c in chunks]
     all_embeddings = []
+    total_batches = -(-len(texts) // batch_size) if texts else 0
 
     for i in range(0, len(texts), batch_size):
         batch = texts[i: i + batch_size]
+        batch_idx = i // batch_size + 1
         attempt = 0
         while True:
             try:
@@ -50,7 +54,20 @@ def embed_batches(
                     ),
                 )
                 all_embeddings.extend([e.values for e in response.embeddings])
-                print(f"  Embedded batch {i // batch_size + 1} / {-(-len(texts) // batch_size)}")
+                print(f"  Embedded batch {batch_idx} / {total_batches}")
+                if progress_callback:
+                    try:
+                        progress_callback(batch_idx, total_batches, f"Embedded batch {batch_idx} of {total_batches}")
+                    except TypeError:
+                        try:
+                            progress_callback(batch_idx, total_batches)
+                        except TypeError:
+                            try:
+                                progress_callback(batch_idx / total_batches)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
                 time.sleep(1)  # short sleep to respect rate limits
                 break
             except APIError as e:
@@ -58,18 +75,28 @@ def embed_batches(
                 if code is not None and 400 <= code < 500 and code != 429:
                     raise
                 attempt += 1
+                if progress_callback:
+                    try:
+                        progress_callback(max(0, batch_idx - 1), total_batches, "Embedding service is busy, retrying...")
+                    except Exception:
+                        pass
                 wait = min(2 ** attempt + random.uniform(0, 1), 60)
-                print(f"  [RETRY {attempt}] Embedding error: {e}. Waiting {wait:.1f}s...")
-                time.sleep(wait)
+                print(f"  [RETRY {attempt}] Embedding error: {e}. Waiting {wait:.1f}s...", flush=True)
                 if attempt >= 6:
-                    raise RuntimeError(f"Embedding failed after {attempt} retries: {e}") from e
+                    raise UploadError("Embedding service is busy after multiple retries. Please try again in a few moments.") from e
+                time.sleep(wait)
             except Exception as e:
                 attempt += 1
+                if progress_callback:
+                    try:
+                        progress_callback(max(0, batch_idx - 1), total_batches, "Embedding service is busy, retrying...")
+                    except Exception:
+                        pass
                 wait = min(2 ** attempt + random.uniform(0, 1), 60)
-                print(f"  [RETRY {attempt}] Embedding error: {e}. Waiting {wait:.1f}s...")
-                time.sleep(wait)
+                print(f"  [RETRY {attempt}] Embedding error: {e}. Waiting {wait:.1f}s...", flush=True)
                 if attempt >= 6:
-                    raise RuntimeError(f"Embedding failed after {attempt} retries: {e}") from e
+                    raise UploadError("Embedding service is busy after multiple retries. Please try again in a few moments.") from e
+                time.sleep(wait)
 
     return all_embeddings
 

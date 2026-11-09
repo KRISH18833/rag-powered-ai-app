@@ -1,8 +1,8 @@
-chat_model: "gemini-3.8-flash"
+chat_model: "gemini-3-flash-preview"
 fallback_models:
-  - "gemini-3.8-flash"
-  - "gemini-3.5-flash"
   - "gemini-3-flash-preview"
+  - "gemini-3.5-flash"
+  - "gemini-3.8-flash"
 embedding_model: "gemini-embedding-001"
 chunk_size: 2000
 overlap: 200
@@ -18,3 +18,10 @@ generation:
 
 retrieval:
   max_distance: 0.45
+
+upload:
+  max_files: 5
+  max_file_mb: 10
+  max_total_pages: 150
+  max_total_chunks: 400
+  upload_max_distance: 0.38
